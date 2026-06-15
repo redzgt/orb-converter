@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Square Video Converter (615x615, 45 FPS)</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+        .box { border: 2px dashed #0076ff; padding: 30px; text-align: center; border-radius: 8px; background: #fafafa; margin-bottom: 20px; }
+        button { background: #0076ff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        select { padding: 8px; font-size: 16px; margin: 10px; border-radius: 5px; }
+        #log { background: #222; color: #00ff00; padding: 15px; border-radius: 5px; font-family: monospace; max-height: 180px; overflow-y: auto; text-align: left; font-size: 11px; }
+        .specs { font-size: 13px; color: #555; background: #eee; padding: 8px; border-radius: 4px; display: inline-block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>Custom Video Processor</h2>
+    <p>Convert videos locally. Output profile is locked to your exact specifications.</p>
+    
+    <div class="box">
+        <input type="file" id="uploader" accept="video/*"><br>
+        <div class="specs">Target Profile: <strong>615x615 px | Max 15s | 45 FPS</strong></div>
+        <br><br>
+        <label for="format">Format: </label>
+        <select id="format">
+            <option value="mp4">MP4 Video</option>
+            <option value="webm">WebM Video</option>
+            <option value="gif">Animated GIF</option>
+        </select><br><br>
+        <button id="convertBtn" disabled>Loading WASM...</button>
+    </div>
+
+    <h3 id="status">Status: Initializing WebAssembly...</h3>
+    <div id="log">System logs will appear here...</div>
+
+    <!-- Load FFmpeg WebAssembly -->
+    <script src="https://unpkg.com"></script>
+    <script>
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        
+        const logElement = document.getElementById('log');
+        const statusElement = document.getElementById('status');
+        const convertBtn = document.getElementById('convertBtn');
+        const uploader = document.getElementById('uploader');
+        const formatSelect = document.getElementById('format');
+
+        const ffmpeg = createFFmpeg({
+            log: true,
+            logger: ({ message }) => {
+                logElement.innerText += message + '\n';
+                logElement.scrollTop = logElement.scrollHeight;
+            }
+        });
+
+        async function initFFmpeg() {
+            try {
+                await ffmpeg.load();
+                statusElement.innerText = "Status: Ready to process";
+                convertBtn.innerText = "Process & Convert Video";
+                convertBtn.disabled = false;
+            } catch (error) {
+                statusElement.innerText = "Status: Failed to load WebAssembly modules";
+                logElement.innerText = "Error: Check your server headers (COOP/COEP must be enabled).";
+            }
+        }
+        initFFmpeg();
+
+        convertBtn.addEventListener('click', async () => {
+            if (uploader.files.length === 0) {
+                alert('Please select a video file.');
+                return;
+            }
+
+            const file = uploader.files[0];
+            const targetFormat = formatSelect.value;
+            const inputName = 'input_video';
+            const outputName = `output_615x615.${targetFormat}`;
+
+            convertBtn.disabled = true;
+            statusElement.innerText = "Status: Transcoding video locally...";
+
+            try {
+                // Load original video into file system memory
+                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+
+                // Explaining the FFmpeg parameters used below:
+                // -t 15                            -> Hard limits duration to exactly 15 seconds
+                // -r 45                            -> Forces target frame rate to 45 FPS
+                // -vf "scale=...crop=615:615..."   -> Centers, crops, and forces output to exactly 615x615
+                let ffmpegArgs = [
+                    '-i', inputName,
+                    '-t', '15',
+                    '-r', '45'
+                ];
+
+                if (targetFormat === 'gif') {
+                    // Optimized single-palette pass for high quality 45 FPS square GIFs
+                    ffmpegArgs.push('-vf', 'scale=615:615:force_original_aspect_ratio=increase,crop=615:615,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse');
+                } else {
+                    // Standard video encoding with forced square framing
+                    ffmpegArgs.push('-vf', 'scale=615:615:force_original_aspect_ratio=increase,crop=615:615');
+                }
+
+                ffmpegArgs.push(outputName);
+
+                // Run compilation loop
+                await ffmpeg.run(...ffmpegArgs);
+
+                // Extract finished file out of WASM isolation
+                const data = ffmpeg.FS('readFile', outputName);
+                const mimeType = targetFormat === 'gif' ? 'image/gif' : `video/${targetFormat}`;
+                const blob = new Blob([data.buffer], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                
+                // Programmatically trigger browser download save dialog
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = outputName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+
+                // Flush local virtual memory states to keep browser tab light
+                ffmpeg.FS('unlink', inputName);
+                ffmpeg.FS('unlink', outputName);
+
+                statusElement.innerText = "Status: Completed! Check your downloads.";
+            } catch (err) {
+                statusElement.innerText = "Status: An error occurred during rendering.";
+                console.error(err);
+            } finally {
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
