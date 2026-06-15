@@ -35,13 +35,12 @@
     <h3 id="status">Status: Initializing Engine...</h3>
     <div id="log">System logs will appear here...</div>
 
-    <!-- Load the newer, highly compatible FFmpeg WASM build -->
-    <script src="https://unpkg.com"></script>
-    <script src="https://unpkg.com"></script>
+    <!-- Load the stable standalone version of FFmpeg WASM -->
+    <script src="https://cloudflare.com"></script>
     
     <script>
-        const { FFmpeg } = window.FFmpegWasm;
-        const { fetchFile } = window.FFmpegUtil;
+        // Use the globally exposed object from the script above
+        const { createFFmpeg, fetchFile } = FFmpeg;
         
         const logElement = document.getElementById('log');
         const statusElement = document.getElementById('status');
@@ -49,23 +48,22 @@
         const uploader = document.getElementById('uploader');
         const formatSelect = document.getElementById('format');
 
-        const ffmpeg = new FFmpeg();
-
-        // Bind logging messages
-        ffmpeg.on('log', ({ message }) => {
-            logElement.innerText += message + '\n';
-            logElement.scrollTop = logElement.scrollHeight;
+        // Initializing FFmpeg with single thread rules configuration
+        const ffmpeg = createFFmpeg({
+            log: true,
+            corePath: 'https://unpkg.com', // Chromebook compatible path
+            logger: ({ message }) => {
+                logElement.innerText += message + '\n';
+                logElement.scrollTop = logElement.scrollHeight;
+            }
         });
 
         async function initFFmpeg() {
             try {
                 statusElement.innerText = "Status: Downloading WebAssembly modules...";
                 
-                // Force load the Single-Threaded Core (Bypasses Chromebook & Github Isolation Blocks)
-                await ffmpeg.load({
-                    coreURL: 'https://unpkg.com',
-                    wasmURL: 'https://unpkg.com'
-                });
+                // Fire up engine loader
+                await ffmpeg.load();
                 
                 statusElement.innerText = "Status: Ready to process!";
                 convertBtn.innerText = "Process & Convert Video";
@@ -90,12 +88,13 @@
             const outputName = `output_615x615.${targetFormat}`;
 
             convertBtn.disabled = true;
-            statusElement.innerText = "Status: Processing locally (This might take a minute)...";
+            statusElement.innerText = "Status: Processing locally (Single-thread encoding take a bit longer)...";
 
             try {
-                // Write input to standard sandboxed virtual space
-                await ffmpeg.writeFile(inputName, await fetchFile(file));
+                // Write user's uploaded target array back to internal sandboxed block
+                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
 
+                // Command setup: -t 15 (Max length), -r 45 (Frames per second Target)
                 let ffmpegArgs = [
                     '-i', inputName,
                     '-t', '15',
@@ -110,16 +109,16 @@
 
                 ffmpegArgs.push(outputName);
 
-                // Run transcoder
-                await ffmpeg.exec(ffmpegArgs);
+                // Run transcoder execution array
+                await ffmpeg.run(...ffmpegArgs);
 
-                // Read output
-                const data = await ffmpeg.readFile(outputName);
+                // Read safe binary block from sandboxed space
+                const data = ffmpeg.FS('readFile', outputName);
                 const mimeType = targetFormat === 'gif' ? 'image/gif' : `video/${targetFormat}`;
                 const blob = new Blob([data.buffer], { type: mimeType });
                 const url = URL.createObjectURL(blob);
                 
-                // Trigger file download pop-up box
+                // Trigger downloadable hyperlink hook
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = outputName;
@@ -127,9 +126,9 @@
                 a.click();
                 document.body.removeChild(a);
 
-                // Erase cached tracking buffers to free browser space
-                await ffmpeg.deleteFile(inputName);
-                await ffmpeg.deleteFile(outputName);
+                // Clean virtual system data caches
+                ffmpeg.FS('unlink', inputName);
+                ffmpeg.FS('unlink', outputName);
 
                 statusElement.innerText = "Status: Completed! Check your downloads folder.";
             } catch (err) {
